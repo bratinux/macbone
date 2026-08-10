@@ -11,7 +11,7 @@
 
 ## 🧠 What is macbone?
 
-`macbone` is a **single binary**, **zero‑dependency** command‑line tool for macOS power users. It wraps the most useful system controls into one consistent, intuitive interface. No more `defaults` incantations or manual `pmset` parsing – just `macbone`.
+`macbone` is a **single binary**, **zero‑dependency** command‑line tool for macOS power users. It wraps the most useful system controls into one consistent, intuitive interface. No more `defaults` incantations or manual `pmset` parsing... it's just `macbone`.
 
 ---
 
