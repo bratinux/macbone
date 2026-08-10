@@ -3,7 +3,7 @@ import Foundation
 import CoreAudio
 import AudioToolbox
 
-let version = "0.1.0"
+let version = "0.1.1"
 
 @main
 struct Macbone {
@@ -49,13 +49,12 @@ struct Macbone {
         COMMANDS:
           dark          on | off | toggle | status
           battery       Show battery charge and status
-          audio out     list | set <device>
           audio volume  0-100
-          audio mute    on | off | toggle
+          audio mute    on | off | toggle | status
           sleep         Put the Mac to sleep immediately
           lock          Lock the screen
           trash empty   Empty the Trash
-          finder showhidden  on | off | toggle
+          finder showhidden  on | off | toggle | status
           info          Show system information
           version       Print version
         """
@@ -65,37 +64,69 @@ struct Macbone {
 
 func handleDark(_ args: [String]) {
     let mode = args.first ?? "status"
-    let script: String
-    switch mode {
-    case "on":
-        script = "tell application \"System Events\" to tell appearance preferences to set dark mode to true"
-    case "off":
-        script = "tell application \"System Events\" to tell appearance preferences to set dark mode to false"
-    case "toggle":
-        script = "tell application \"System Events\" to tell appearance preferences to set dark mode to not dark mode"
-    case "status":
-        script = "tell application \"System Events\" to tell appearance preferences to return dark mode"
-    default:
+
+    let getStateScript = "tell application \"System Events\" to tell appearance preferences to return dark mode"
+    guard let getState = NSAppleScript(source: getStateScript) else {
+        print("Error: could not create AppleScript")
+        exit(1)
+    }
+    var error: NSDictionary?
+    let currentResult = getState.executeAndReturnError(&error)
+    let currentlyDark = currentResult.booleanValue
+
+    if let error = error {
+        print("Error reading dark mode state: \(error)")
+        exit(1)
+    }
+
+    if mode == "status" {
+        print(currentlyDark ? "Dark mode is on" : "Dark mode is off")
+        return
+    }
+
+    if mode == "on" {
+        if currentlyDark {
+            print("Dark mode is already on")
+            return
+        }
+    } else if mode == "off" {
+        if !currentlyDark {
+            print("Dark mode is already off")
+            return
+        }
+    } else if mode != "toggle" {
         print("Unknown dark mode option: \(mode)")
         exit(1)
     }
 
-    guard let appleScript = NSAppleScript(source: script) else {
-        print("Failed to create AppleScript")
-        exit(1)
-    }
-    var error: NSDictionary?
-    let result = appleScript.executeAndReturnError(&error)
-    if let error = error {
-        print("Error: \(error)")
-        exit(1)
-    }
-    if mode == "status" {
-        let isDark = result.booleanValue
-        print(isDark ? "on" : "off")
+    let targetState: Bool
+    if mode == "on" {
+        targetState = true
+    } else if mode == "off" {
+        targetState = false
     } else {
-        print("Dark mode set to \(mode)")
+        targetState = !currentlyDark
     }
+
+    let setScript: String
+    if targetState {
+        setScript = "tell application \"System Events\" to tell appearance preferences to set dark mode to true"
+    } else {
+        setScript = "tell application \"System Events\" to tell appearance preferences to set dark mode to false"
+    }
+
+    guard let appleScript = NSAppleScript(source: setScript) else {
+        print("Error: could not create AppleScript")
+        exit(1)
+    }
+    error = nil
+    appleScript.executeAndReturnError(&error)
+    if let error = error {
+        print("Error setting dark mode: \(error)")
+        exit(1)
+    }
+
+    print("Dark mode is now \(targetState ? "on" : "off")")
 }
 
 func handleBattery() {
@@ -142,33 +173,45 @@ func handleBattery() {
             if state.contains("charging") {
                 statusText = "charging"
             } else if state.contains("discharging") {
-                statusText = "discharging"
+                statusText = "on battery"
                 if !timeRemaining.isEmpty {
                     statusText += " (\(timeRemaining) remaining)"
                 }
+            } else if state.contains("ac attached") || state.contains("charged") {
+                statusText = "not charging (AC attached)"
             } else {
                 statusText = state
             }
 
-            print("Battery")
-            print("  Charge: \(percent)%")
-            print("  Status: \(statusText)")
+            print("Battery: \(percent)% (\(statusText))")
         }
     }
 
     if !foundBattery {
-        print("No internal battery found")
-        exit(1)
+        let model = getModelIdentifier()
+        if model.contains("Macmini") || model.contains("iMac") || model.contains("MacPro") || model.contains("MacStudio") {
+            print("No battery – this Mac is a desktop (AC power only)")
+        } else {
+            print("No internal battery found")
+        }
     }
+}
+
+func getModelIdentifier() -> String {
+    var size = 0
+    sysctlbyname("hw.model", nil, &size, nil, 0)
+    var model = [CChar](repeating: 0, count: size)
+    sysctlbyname("hw.model", &model, &size, nil, 0)
+    let modelData = Data(bytes: model, count: size)
+    return String(data: modelData, encoding: .utf8) ?? "Unknown"
 }
 
 func handleAudio(_ args: [String]) {
     guard let sub = args.first else {
-        print("audio requires a subcommand: out, volume, mute")
+        print("audio requires a subcommand: volume, mute")
         exit(1)
     }
     switch sub {
-    case "out":     handleAudioOut(Array(args.dropFirst()))
     case "volume":  handleVolume(Array(args.dropFirst()))
     case "mute":    handleMute(Array(args.dropFirst()))
     default:
@@ -177,108 +220,9 @@ func handleAudio(_ args: [String]) {
     }
 }
 
-func handleAudioOut(_ args: [String]) {
-    guard let action = args.first else {
-        print("audio out requires: list | set <device>")
-        exit(1)
-    }
-    if action == "list" {
-        listAudioDevices()
-    } else if action == "set" {
-        guard args.count >= 2 else {
-            print("audio out set requires a device name")
-            exit(1)
-        }
-        setAudioDevice(name: args[1])
-    } else {
-        print("Unknown audio out action: \(action)")
-        exit(1)
-    }
-}
-
-func listAudioDevices() {
-    var address = AudioObjectPropertyAddress(
-        mSelector: kAudioHardwarePropertyDevices,
-        mScope: kAudioObjectPropertyScopeGlobal,
-        mElement: kAudioObjectPropertyElementMain
-    )
-    var dataSize: UInt32 = 0
-    AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize)
-    let deviceCount = Int(dataSize) / MemoryLayout<AudioDeviceID>.size
-    var devices = [AudioDeviceID](repeating: 0, count: deviceCount)
-    AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize, &devices)
-
-    for device in devices {
-        var name: CFString?
-        var nameSize = UInt32(MemoryLayout<CFString?>.size)
-        var nameAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyDeviceNameCFString,
-            mScope: kAudioDevicePropertyScopeOutput,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        withUnsafeMutablePointer(to: &name) { namePtr in
-            _ = AudioObjectGetPropertyData(device, &nameAddress, 0, nil, &nameSize, namePtr)
-        }
-        if let deviceName = name {
-            print(deviceName as String)
-        }
-    }
-}
-
-func setAudioDevice(name: String) {
-    var address = AudioObjectPropertyAddress(
-        mSelector: kAudioHardwarePropertyDevices,
-        mScope: kAudioObjectPropertyScopeGlobal,
-        mElement: kAudioObjectPropertyElementMain
-    )
-    var dataSize: UInt32 = 0
-    AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize)
-    let deviceCount = Int(dataSize) / MemoryLayout<AudioDeviceID>.size
-    var devices = [AudioDeviceID](repeating: 0, count: deviceCount)
-    AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize, &devices)
-
-    for device in devices {
-        var deviceName: CFString?
-        var nameSize = UInt32(MemoryLayout<CFString?>.size)
-        var nameAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyDeviceNameCFString,
-            mScope: kAudioDevicePropertyScopeOutput,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        withUnsafeMutablePointer(to: &deviceName) { namePtr in
-            _ = AudioObjectGetPropertyData(device, &nameAddress, 0, nil, &nameSize, namePtr)
-        }
-        if let dName = deviceName, dName as String == name {
-            var defaultAddress = AudioObjectPropertyAddress(
-                mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-                mScope: kAudioObjectPropertyScopeGlobal,
-                mElement: kAudioObjectPropertyElementMain
-            )
-            var mutableDevice = device
-            let setStatus = AudioObjectSetPropertyData(
-                AudioObjectID(kAudioObjectSystemObject),
-                &defaultAddress,
-                0,
-                nil,
-                UInt32(MemoryLayout<AudioDeviceID>.size),
-                &mutableDevice
-            )
-            if setStatus == noErr {
-                print("Audio output set to \(name)")
-            } else {
-                print("Failed to set audio device (error \(setStatus)). You may need to grant accessibility permissions.")
-                exit(1)
-            }
-            return
-        }
-    }
-    print("Device not found: \(name)")
-    exit(1)
-}
-
 func handleVolume(_ args: [String]) {
     guard let volStr = args.first, let vol = Int(volStr), (0...100).contains(vol) else {
-        print("Volume must be 0-100")
+        print("Volume must be between 0 and 100")
         exit(1)
     }
     var defaultOutput = AudioDeviceID()
@@ -307,9 +251,10 @@ func handleVolume(_ args: [String]) {
 
 func handleMute(_ args: [String]) {
     guard let action = args.first else {
-        print("mute requires on | off | toggle")
+        print("mute requires on | off | toggle | status")
         exit(1)
     }
+
     var defaultOutput = AudioDeviceID()
     var size = UInt32(MemoryLayout<AudioDeviceID>.size)
     var address = AudioObjectPropertyAddress(
@@ -328,6 +273,11 @@ func handleMute(_ args: [String]) {
     var propSize = UInt32(MemoryLayout<UInt32>.size)
     AudioObjectGetPropertyData(defaultOutput, &muteAddress, 0, nil, &propSize, &isMuted)
 
+    if action == "status" {
+        print(isMuted == 1 ? "Audio is muted" : "Audio is not muted")
+        return
+    }
+
     let newMute: UInt32
     switch action {
     case "on":      newMute = 1
@@ -337,9 +287,15 @@ func handleMute(_ args: [String]) {
         print("Unknown mute option: \(action)")
         exit(1)
     }
+
     var muteVal = newMute
     AudioObjectSetPropertyData(defaultOutput, &muteAddress, 0, nil, UInt32(MemoryLayout<UInt32>.size), &muteVal)
-    print(newMute == 1 ? "Muted" : "Unmuted")
+
+    if newMute == 1 {
+        print("Audio is now muted")
+    } else {
+        print("Audio is now unmuted")
+    }
 }
 
 func handleSleep() {
@@ -372,6 +328,7 @@ func handleTrash(_ args: [String]) {
         print("trash empty   — empty the Trash")
         exit(1)
     }
+
     let script = "tell application \"Finder\" to empty trash"
     guard let appleScript = NSAppleScript(source: script) else {
         print("Failed to create AppleScript")
@@ -380,36 +337,80 @@ func handleTrash(_ args: [String]) {
     var error: NSDictionary?
     appleScript.executeAndReturnError(&error)
     if let error = error {
-        print("Failed to empty trash: \(error)")
+        let errorNumber = error[NSAppleScript.errorNumber] as? Int
+        if errorNumber == -128 {
+            print("Trash is already empty")
+        } else {
+            print("Failed to empty trash: \(error)")
+        }
         exit(1)
     }
-    print("Trash emptied")
+    print("Trash emptied successfully")
 }
 
 func handleFinder(_ args: [String]) {
     guard args.count >= 2, args[0] == "showhidden" else {
-        print("finder showhidden on | off | toggle")
+        print("finder showhidden on | off | toggle | status")
         exit(1)
     }
     let action = args[1]
-    let cmd: String
+
+    let getStateTask = Process()
+    getStateTask.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
+    getStateTask.arguments = ["read", "com.apple.finder", "AppleShowAllFiles"]
+    let getPipe = Pipe()
+    getStateTask.standardOutput = getPipe
+    getStateTask.launch()
+    getStateTask.waitUntilExit()
+    let data = getPipe.fileHandleForReading.readDataToEndOfFile()
+    let currentState = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "0"
+    let currentlyShowing = (currentState == "1" || currentState == "YES")
+
+    if action == "status" {
+        print(currentlyShowing ? "Hidden files are visible" : "Hidden files are hidden")
+        return
+    }
+
+    let targetShow: Bool
     switch action {
     case "on":
-        cmd = "defaults write com.apple.finder AppleShowAllFiles -bool YES && killall Finder"
+        targetShow = true
     case "off":
-        cmd = "defaults write com.apple.finder AppleShowAllFiles -bool NO && killall Finder"
+        targetShow = false
     case "toggle":
-        cmd = "defaults read com.apple.finder AppleShowAllFiles | grep -q 1 && defaults write com.apple.finder AppleShowAllFiles -bool NO || defaults write com.apple.finder AppleShowAllFiles -bool YES; killall Finder"
+        targetShow = !currentlyShowing
     default:
         print("Invalid option: \(action)")
         exit(1)
     }
+
+    if targetShow == currentlyShowing {
+        if targetShow {
+            print("Hidden files are already visible")
+        } else {
+            print("Hidden files are already hidden")
+        }
+        return
+    }
+
+    let cmd: String
+    if targetShow {
+        cmd = "defaults write com.apple.finder AppleShowAllFiles -bool YES && killall Finder"
+    } else {
+        cmd = "defaults write com.apple.finder AppleShowAllFiles -bool NO && killall Finder"
+    }
+
     let task = Process()
     task.executableURL = URL(fileURLWithPath: "/bin/zsh")
     task.arguments = ["-c", cmd]
     task.launch()
     task.waitUntilExit()
-    print("Finder show hidden files: \(action)")
+
+    if targetShow {
+        print("Hidden files are now visible")
+    } else {
+        print("Hidden files are now hidden")
+    }
 }
 
 func handleInfo() {
@@ -418,12 +419,7 @@ func handleInfo() {
     let hostName = processInfo.hostName
     let uptime = processInfo.systemUptime
 
-    var size = 0
-    sysctlbyname("hw.model", nil, &size, nil, 0)
-    var model = [CChar](repeating: 0, count: size)
-    sysctlbyname("hw.model", &model, &size, nil, 0)
-    let modelData = Data(bytes: model, count: size)
-    let modelStr = String(data: modelData, encoding: .utf8) ?? "Unknown"
+    let modelStr = getModelIdentifier()
 
     let serial: String
     let task = Process()
