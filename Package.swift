@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "macbone",
-    platforms: [.macOS(.v15)],
+    platforms: [.macOS(.v26)],
     targets: [
         .executableTarget(
             name: "macbone"

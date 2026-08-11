@@ -3,7 +3,7 @@ import Foundation
 import CoreAudio
 import AudioToolbox
 
-let version = "0.1.1"
+let version = "0.2.0"
 
 @main
 struct Macbone {
@@ -31,6 +31,7 @@ struct Macbone {
         case "lock":           handleLock()
         case "trash":          handleTrash(subArgs)
         case "finder":         handleFinder(subArgs)
+        case "wallpaper":      handleWallpaper(subArgs)
         case "info":           handleInfo()
         case "help", "--help": printUsage()
         default:
@@ -49,8 +50,9 @@ struct Macbone {
         COMMANDS:
           dark          on | off | toggle | status
           battery       Show battery charge and status
-          audio volume  0-100
+          audio volume  0-100 | status
           audio mute    on | off | toggle | status
+          wallpaper     set <path>
           sleep         Put the Mac to sleep immediately
           lock          Lock the screen
           trash empty   Empty the Trash
@@ -162,21 +164,27 @@ func handleBattery() {
             var timeRemaining = ""
 
             if semicolons.count >= 3 {
-                let remainder = semicolons[2]
+                let rawRemainder = semicolons[2]
+                let remainder = rawRemainder.trimmingCharacters(in: .whitespaces)
+
                 if remainder.contains("remaining") {
                     timeRemaining = remainder.replacingOccurrences(of: " remaining", with: "")
-                } else {
+                } else if remainder.contains("(no estimate)") {
+                    timeRemaining = ""
+                } else if remainder.contains(":") {
                     timeRemaining = remainder
+                } else {
+                    timeRemaining = ""
                 }
             }
 
-            if state.contains("charging") {
-                statusText = "charging"
-            } else if state.contains("discharging") {
+            if state.contains("discharging") {
                 statusText = "on battery"
                 if !timeRemaining.isEmpty {
                     statusText += " (\(timeRemaining) remaining)"
                 }
+            } else if state.contains("charging") {
+                statusText = "charging"
             } else if state.contains("ac attached") || state.contains("charged") {
                 statusText = "not charging (AC attached)"
             } else {
@@ -221,10 +229,6 @@ func handleAudio(_ args: [String]) {
 }
 
 func handleVolume(_ args: [String]) {
-    guard let volStr = args.first, let vol = Int(volStr), (0...100).contains(vol) else {
-        print("Volume must be between 0 and 100")
-        exit(1)
-    }
     var defaultOutput = AudioDeviceID()
     var size = UInt32(MemoryLayout<AudioDeviceID>.size)
     var address = AudioObjectPropertyAddress(
@@ -233,6 +237,24 @@ func handleVolume(_ args: [String]) {
         mElement: kAudioObjectPropertyElementMain
     )
     AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &defaultOutput)
+
+    if args.isEmpty || (args.count == 1 && args[0] == "status") {
+        var left: Float32 = 0
+        var volumeAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectGetPropertyData(defaultOutput, &volumeAddress, 0, nil, &size, &left)
+        let percent = Int(left * 100)
+        print("Volume is \(percent)%")
+        return
+    }
+
+    guard let volStr = args.first, let vol = Int(volStr), (0...100).contains(vol) else {
+        print("Volume must be between 0 and 100")
+        exit(1)
+    }
 
     var left: Float32 = Float32(vol) / 100.0
     var volumeAddress = AudioObjectPropertyAddress(
@@ -410,6 +432,31 @@ func handleFinder(_ args: [String]) {
         print("Hidden files are now visible")
     } else {
         print("Hidden files are now hidden")
+    }
+}
+
+func handleWallpaper(_ args: [String]) {
+    guard args.count >= 2, args[0] == "set" else {
+        print("wallpaper set <path>")
+        exit(1)
+    }
+
+    let path = args[1]
+    let url = URL(fileURLWithPath: path)
+
+    guard FileManager.default.fileExists(atPath: path) else {
+        print("File not found: \(path)")
+        exit(1)
+    }
+
+    do {
+        for screen in NSScreen.screens {
+            try NSWorkspace.shared.setDesktopImageURL(url, for: screen, options: [:])
+        }
+        print("Wallpaper set to \(path)")
+    } catch {
+        print("Failed to set wallpaper: \(error.localizedDescription)")
+        exit(1)
     }
 }
 
