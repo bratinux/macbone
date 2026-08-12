@@ -3,7 +3,7 @@ import Foundation
 import CoreAudio
 import AudioToolbox
 
-let version = "0.2.0"
+let version = "0.3.0"
 
 @main
 struct Macbone {
@@ -25,13 +25,16 @@ struct Macbone {
 
         switch command {
         case "dark":           handleDark(subArgs)
-        case "battery":        handleBattery()
+        case "battery":        handleBattery(subArgs)
         case "audio":          handleAudio(subArgs)
         case "sleep":          handleSleep()
         case "lock":           handleLock()
         case "trash":          handleTrash(subArgs)
         case "finder":         handleFinder(subArgs)
         case "wallpaper":      handleWallpaper(subArgs)
+        case "cpu":            handleCPU()
+        case "memory":         handleMemory()
+        case "thermal":        handleThermal()
         case "info":           handleInfo()
         case "help", "--help": printUsage()
         default:
@@ -50,13 +53,17 @@ struct Macbone {
         COMMANDS:
           dark          on | off | toggle | status
           battery       Show battery charge and status
-          audio volume  0-100 | status
+          battery health Show battery health and cycle count
+          audio volume  0-100 | status | up | down
           audio mute    on | off | toggle | status
           wallpaper     set <path>
           sleep         Put the Mac to sleep immediately
           lock          Lock the screen
           trash empty   Empty the Trash
           finder showhidden  on | off | toggle | status
+          cpu           Show CPU information and load
+          memory        Show memory usage and pressure
+          thermal       Show thermal state
           info          Show system information
           version       Print version
         """
@@ -131,7 +138,12 @@ func handleDark(_ args: [String]) {
     print("Dark mode is now \(targetState ? "on" : "off")")
 }
 
-func handleBattery() {
+func handleBattery(_ args: [String]) {
+    if args.first == "health" {
+        handleBatteryHealth()
+        return
+    }
+
     let task = Process()
     task.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
     task.arguments = ["-g", "batt"]
@@ -205,6 +217,48 @@ func handleBattery() {
     }
 }
 
+func handleBatteryHealth() {
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: "/usr/sbin/system_profiler")
+    task.arguments = ["SPPowerDataType"]
+    let pipe = Pipe()
+    task.standardOutput = pipe
+    task.launch()
+    task.waitUntilExit()
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    guard let output = String(data: data, encoding: .utf8) else {
+        print("Could not read battery health information")
+        exit(1)
+    }
+
+    var healthPercent = ""
+    var cycleCount = ""
+
+    for line in output.components(separatedBy: "\n") {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.hasPrefix("Health Information:") {
+            continue
+        }
+        if trimmed.hasPrefix("Cycle Count:") {
+            cycleCount = trimmed.replacingOccurrences(of: "Cycle Count:", with: "").trimmingCharacters(in: .whitespaces)
+        }
+        if trimmed.hasPrefix("Maximum Capacity:") {
+            healthPercent = trimmed.replacingOccurrences(of: "Maximum Capacity:", with: "").trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "%", with: "")
+        }
+    }
+
+    if healthPercent.isEmpty || cycleCount.isEmpty {
+        let model = getModelIdentifier()
+        if model.contains("Macmini") || model.contains("iMac") || model.contains("MacPro") || model.contains("MacStudio") {
+            print("No battery – this Mac is a desktop (AC power only)")
+        } else {
+            print("No internal battery found")
+        }
+    } else {
+        print("Battery Health: \(healthPercent)% (cycle count: \(cycleCount))")
+    }
+}
+
 func getModelIdentifier() -> String {
     var size = 0
     sysctlbyname("hw.model", nil, &size, nil, 0)
@@ -251,8 +305,35 @@ func handleVolume(_ args: [String]) {
         return
     }
 
+    if args.first == "up" || args.first == "down" {
+        var left: Float32 = 0
+        var volumeAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwareServiceDeviceProperty_VirtualMainVolume,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectGetPropertyData(defaultOutput, &volumeAddress, 0, nil, &size, &left)
+        var current = Int(left * 100)
+
+        if args.first == "up" {
+            current = min(100, current + 10)
+        } else {
+            current = max(0, current - 10)
+        }
+
+        var newVolume: Float32 = Float32(current) / 100.0
+        let setStatus = AudioObjectSetPropertyData(defaultOutput, &volumeAddress, 0, nil, UInt32(MemoryLayout<Float32>.size), &newVolume)
+        if setStatus == noErr {
+            print("Volume set to \(current)%")
+        } else {
+            print("Failed to set volume")
+            exit(1)
+        }
+        return
+    }
+
     guard let volStr = args.first, let vol = Int(volStr), (0...100).contains(vol) else {
-        print("Volume must be between 0 and 100")
+        print("Volume must be between 0 and 100, or use up/down/status")
         exit(1)
     }
 
@@ -460,6 +541,82 @@ func handleWallpaper(_ args: [String]) {
     }
 }
 
+func handleCPU() {
+    let brand = runSysctlString("machdep.cpu.brand_string")
+
+    let perfCores = runSysctlInt("hw.perflevel0.logicalcpu") ?? 0
+    let effCores = runSysctlInt("hw.perflevel1.logicalcpu") ?? 0
+    let totalCores = runSysctlInt("hw.ncpu") ?? 0
+
+    var coreDescription: String
+    if perfCores > 0 && effCores > 0 {
+        coreDescription = "\(perfCores) performance, \(effCores) efficiency cores"
+    } else if totalCores > 0 {
+        coreDescription = "\(totalCores) cores"
+    } else {
+        coreDescription = "unknown cores"
+    }
+
+    var loadInfo = "unknown"
+    var loadavg = [Double](repeating: 0.0, count: 3)
+    if getloadavg(&loadavg, 3) != -1 {
+        let loadPercent = Int((loadavg[0] / Double(totalCores)) * 100)
+        loadInfo = "\(loadPercent)%"
+    }
+
+    print("CPU: \(brand) (\(coreDescription))")
+    print("Load: \(loadInfo)")
+}
+
+func handleMemory() {
+    let totalBytes = runSysctlUInt64("hw.memsize") ?? 0
+    let totalGB = Double(totalBytes) / 1_000_000_000.0
+
+    let pageSize = runSysctlInt("hw.pagesize") ?? 16384
+    var vmStat = vm_statistics64()
+    var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size)
+    let result = withUnsafeMutablePointer(to: &vmStat) {
+        $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+            host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+        }
+    }
+
+    var usedBytes: UInt64 = 0
+    if result == KERN_SUCCESS {
+        usedBytes = UInt64(vmStat.active_count + vmStat.wire_count + vmStat.compressor_page_count) * UInt64(pageSize)
+    }
+    let usedGB = Double(usedBytes) / 1_000_000_000.0
+    let usedPercent = totalBytes > 0 ? Int((Double(usedBytes) / Double(totalBytes)) * 100) : 0
+
+    var pressureLevel = "Unknown"
+    var pressureInt: Int32 = 0
+    var pressureSize = MemoryLayout<Int32>.size
+    if sysctlbyname("kern.memorystatus_vm_pressure_level", &pressureInt, &pressureSize, nil, 0) == 0 {
+        switch pressureInt {
+        case 1: pressureLevel = "Normal"
+        case 2: pressureLevel = "Warning"
+        case 4: pressureLevel = "Critical"
+        default: pressureLevel = "Unknown"
+        }
+    }
+
+    print(String(format: "Memory: %.1f GB total, %.1f GB used (\(usedPercent)%%)", totalGB, usedGB))
+    print("Pressure: \(pressureLevel)")
+}
+
+func handleThermal() {
+    let state = ProcessInfo.processInfo.thermalState
+    let stateString: String
+    switch state {
+    case .nominal:  stateString = "Nominal"
+    case .fair:     stateString = "Fair"
+    case .serious:  stateString = "Serious"
+    case .critical: stateString = "Critical"
+    @unknown default: stateString = "Unknown"
+    }
+    print("Thermal State: \(stateString)")
+}
+
 func handleInfo() {
     let processInfo = ProcessInfo.processInfo
     let osVersion = processInfo.operatingSystemVersionString
@@ -501,4 +658,35 @@ func handleInfo() {
     Serial:      \(serial)
     Uptime:      \(uptimeStr)
     """)
+}
+
+func runSysctlString(_ name: String) -> String {
+    var size = 0
+    if sysctlbyname(name, nil, &size, nil, 0) != 0 {
+        return "Unknown"
+    }
+    var value = [CChar](repeating: 0, count: size)
+    if sysctlbyname(name, &value, &size, nil, 0) != 0 {
+        return "Unknown"
+    }
+    let data = Data(bytes: value, count: size)
+    return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .controlCharacters) ?? "Unknown"
+}
+
+func runSysctlInt(_ name: String) -> Int? {
+    var value: Int32 = 0
+    var size = MemoryLayout<Int32>.size
+    if sysctlbyname(name, &value, &size, nil, 0) == 0 {
+        return Int(value)
+    }
+    return nil
+}
+
+func runSysctlUInt64(_ name: String) -> UInt64? {
+    var value: UInt64 = 0
+    var size = MemoryLayout<UInt64>.size
+    if sysctlbyname(name, &value, &size, nil, 0) == 0 {
+        return value
+    }
+    return nil
 }
