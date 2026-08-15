@@ -3,7 +3,7 @@ import Foundation
 import CoreAudio
 import AudioToolbox
 
-let version = "0.3.0"
+let version = "0.4.0"
 
 @main
 struct Macbone {
@@ -35,6 +35,12 @@ struct Macbone {
         case "cpu":            handleCPU()
         case "memory":         handleMemory()
         case "thermal":        handleThermal()
+        case "disk":           handleDisk(subArgs)
+        case "process":        handleProcess(subArgs)
+        case "notify":         handleNotify(subArgs)
+        case "openwith":       handleOpenWith(subArgs)
+        case "eject":          handleEject(subArgs)
+        case "ejectall":       handleEjectAll()
         case "info":           handleInfo()
         case "help", "--help": printUsage()
         default:
@@ -64,6 +70,14 @@ struct Macbone {
           cpu           Show CPU information and load
           memory        Show memory usage and pressure
           thermal       Show thermal state
+          disk          Show system volume usage
+          disk list     Show all mounted volumes
+          process       Show process by name
+          process top   Show top processes by CPU or memory
+          notify        Send a notification
+          openwith      Open file with specific app
+          eject         Eject a volume
+          ejectall      Eject all removable volumes
           info          Show system information
           version       Print version
         """
@@ -660,6 +674,205 @@ func handleInfo() {
     """)
 }
 
+func handleDisk(_ args: [String]) {
+    if args.first == "list" {
+        listDisks()
+    } else {
+        showMainDisk()
+    }
+}
+
+func showMainDisk() {
+    let mainVolumeURL = URL(fileURLWithPath: "/")
+    guard let values = try? mainVolumeURL.resourceValues(forKeys: [.volumeNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityKey]) else {
+        print("Could not read volume info")
+        exit(1)
+    }
+    let total = Int64(values.volumeTotalCapacity ?? 0)
+    let available = Int64(values.volumeAvailableCapacity ?? 0)
+    let used = total - available
+    let percent = total > 0 ? Int((Double(used) / Double(total)) * 100) : 0
+    let name = values.volumeName ?? "System"
+    print("\(name): \(formatBytes(used)) used of \(formatBytes(total)) (\(percent)%) — \(formatBytes(available)) free")
+}
+
+func listDisks() {
+    guard let volumes = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: [.volumeNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityKey], options: [.skipHiddenVolumes]) else {
+        print("Could not list volumes")
+        exit(1)
+    }
+    for volume in volumes {
+        guard let values = try? volume.resourceValues(forKeys: [.volumeNameKey, .volumeTotalCapacityKey, .volumeAvailableCapacityKey]) else { continue }
+        let name = values.volumeName ?? volume.lastPathComponent
+        let total = Int64(values.volumeTotalCapacity ?? 0)
+        let available = Int64(values.volumeAvailableCapacity ?? 0)
+        if total <= 0 { continue }
+        print("\(name)\t\(formatBytes(total)) total, \(formatBytes(available)) free")
+    }
+}
+
+func formatBytes(_ bytes: Int64) -> String {
+    let gb = Double(bytes) / 1_000_000_000.0
+    return String(format: "%.1f GB", gb)
+}
+
+func handleProcess(_ args: [String]) {
+    guard let sub = args.first else {
+        print("process <name> or process top [--cpu|--memory] [--count N]")
+        exit(1)
+    }
+    if sub == "top" {
+        processTop(Array(args.dropFirst()))
+    } else {
+        processSearch(sub)
+    }
+}
+
+func processSearch(_ name: String) {
+    let (output, _, status) = runCommand("/bin/ps", ["-axo", "pid=,%cpu=,%mem=,comm="])
+    guard status == 0 else {
+        print("Failed to list processes")
+        exit(1)
+    }
+    let lines = output.components(separatedBy: "\n").filter { !$0.isEmpty }
+    let filtered = lines.filter { line in
+        let parts = line.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: true)
+        guard parts.count >= 4 else { return false }
+        let comm = parts[3]
+        return comm.localizedCaseInsensitiveContains(name)
+    }
+    if filtered.isEmpty {
+        print("No processes found matching '\(name)'")
+        return
+    }
+    print("PID   CPU%   MEM%   NAME")
+    for line in filtered {
+        print(line)
+    }
+}
+
+func processTop(_ args: [String]) {
+    var sortBy = "cpu"
+    var count = 10
+    var i = 0
+    while i < args.count {
+        if args[i] == "--cpu" { sortBy = "cpu" }
+        else if args[i] == "--memory" { sortBy = "memory" }
+        else if args[i] == "--count", i+1 < args.count, let n = Int(args[i+1]) { count = max(1, n); i += 1 }
+        else { print("Unknown option: \(args[i])"); exit(1) }
+        i += 1
+    }
+
+    let (output, _, status) = runCommand("/bin/ps", ["-axo", "pid=,%cpu=,%mem=,comm="])
+    guard status == 0 else {
+        print("Failed to list processes")
+        exit(1)
+    }
+    let lines = output.components(separatedBy: "\n").filter { !$0.isEmpty }
+    var parsed: [(pid: String, cpu: Double, mem: Double, name: String)] = []
+    for line in lines {
+        let parts = line.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: true)
+        guard parts.count >= 4 else { continue }
+        guard let cpu = Double(parts[1]), let mem = Double(parts[2]) else { continue }
+        parsed.append((String(parts[0]), cpu, mem, String(parts[3])))
+    }
+    parsed.sort {
+        if sortBy == "cpu" {
+            return $0.cpu > $1.cpu
+        } else {
+            return $0.mem > $1.mem
+        }
+    }
+    let top = Array(parsed.prefix(count))
+    print("PID   CPU%   MEM%   NAME")
+    for p in top {
+        print("\(p.pid.padding(toLength: 8, withPad: " ", startingAt: 0)) \(String(format: "%.1f", p.cpu).padding(toLength: 6, withPad: " ", startingAt: 0)) \(String(format: "%.1f", p.mem).padding(toLength: 6, withPad: " ", startingAt: 0)) \(p.name)")
+    }
+}
+
+func handleNotify(_ args: [String]) {
+    var message = ""
+    var title = "macbone"
+    var i = 0
+    while i < args.count {
+        if args[i] == "--title", i+1 < args.count {
+            title = args[i+1]
+            i += 2
+        } else {
+            message = args[i]
+            i += 1
+        }
+    }
+    guard !message.isEmpty else {
+        print("notify <message> [--title <text>]")
+        exit(1)
+    }
+    let escapedMessage = message.replacingOccurrences(of: "\"", with: "\\\"")
+    let escapedTitle = title.replacingOccurrences(of: "\"", with: "\\\"")
+    let script = "display notification \"\(escapedMessage)\" with title \"\(escapedTitle)\""
+    let (_, err, status) = runCommand("/usr/bin/osascript", ["-e", script])
+    if status != 0 {
+        print("Failed to send notification: \(err)")
+        exit(1)
+    }
+    print("Notification sent")
+}
+
+func handleOpenWith(_ args: [String]) {
+    guard args.count >= 2 else {
+        print("openwith <app> <file>")
+        exit(1)
+    }
+    let app = args[0]
+    let file = args[1]
+    guard FileManager.default.fileExists(atPath: file) else {
+        print("File not found: \(file)")
+        exit(1)
+    }
+    let (_, err, status) = runCommand("/usr/bin/open", ["-a", app, file])
+    if status != 0 {
+        print("Failed to open \(file) with \(app): \(err)")
+        exit(1)
+    }
+    print("Opening \(file) with \(app)")
+}
+
+func handleEject(_ args: [String]) {
+    guard args.count == 1 else {
+        print("eject <mountpoint>")
+        exit(1)
+    }
+    let mountPoint = args[0]
+    let url = URL(fileURLWithPath: mountPoint)
+    do {
+        try NSWorkspace.shared.unmountAndEjectDevice(at: url)
+        print("Ejected \(mountPoint)")
+    } catch {
+        print("Failed to eject \(mountPoint): \(error.localizedDescription)")
+        exit(1)
+    }
+}
+
+func handleEjectAll() {
+    guard let volumes = FileManager.default.mountedVolumeURLs(includingResourceValuesForKeys: [.volumeIsRemovableKey, .volumeIsEjectableKey], options: [.skipHiddenVolumes]) else {
+        print("Could not list volumes")
+        exit(1)
+    }
+    var ejected = 0
+    for volume in volumes {
+        guard let values = try? volume.resourceValues(forKeys: [.volumeIsRemovableKey, .volumeIsEjectableKey]) else { continue }
+        if values.volumeIsRemovable == true || values.volumeIsEjectable == true {
+            do {
+                try NSWorkspace.shared.unmountAndEjectDevice(at: volume)
+                ejected += 1
+            } catch {
+                print("Failed to eject \(volume.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+    }
+    print("Ejected \(ejected) volume\(ejected == 1 ? "" : "s")")
+}
+
 func runSysctlString(_ name: String) -> String {
     var size = 0
     if sysctlbyname(name, nil, &size, nil, 0) != 0 {
@@ -689,4 +902,21 @@ func runSysctlUInt64(_ name: String) -> UInt64? {
         return value
     }
     return nil
+}
+
+func runCommand(_ executable: String, _ arguments: [String]) -> (stdout: String, stderr: String, status: Int32) {
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: executable)
+    task.arguments = arguments
+    let outPipe = Pipe()
+    let errPipe = Pipe()
+    task.standardOutput = outPipe
+    task.standardError = errPipe
+    task.launch()
+    task.waitUntilExit()
+    let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+    let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+    let outStr = String(data: outData, encoding: .utf8) ?? ""
+    let errStr = String(data: errData, encoding: .utf8) ?? ""
+    return (outStr, errStr, task.terminationStatus)
 }
