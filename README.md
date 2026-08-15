@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-26%20%7C%2027-000000?logo=apple&style=for-the-badge" alt="macOS versions">
   <img src="https://img.shields.io/badge/Swift-6.3-F05138?logo=swift&style=for-the-badge" alt="Swift 6.3">
-  <img src="https://img.shields.io/badge/version-0.3.0-blue?style=for-the-badge" alt="version">
+  <img src="https://img.shields.io/badge/version-0.4.0-blue?style=for-the-badge" alt="version">
   <img src="https://img.shields.io/github/license/bratinux/macbone?style=for-the-badge" alt="License">
 </p>
 
@@ -16,7 +16,7 @@
 
 ---
 
-## ✨ Features (v0.3.0)
+## ✨ Features (v0.4.0)
 
 - **Dark Mode** – toggle, query, or set directly from your terminal
 - **Battery** – charge level & status; health & cycle count
@@ -25,6 +25,11 @@
 - **Sleep & Lock** – instant sleep or lock screen
 - **Trash** – empty your Trash in one command
 - **Finder** – show/hide hidden files
+- **Disk** – system volume usage and full volume list
+- **Process** – search by name or show top CPU/memory consumers
+- **Notify** – post macOS notifications from the terminal
+- **OpenWith** – open files with a specific application
+- **Eject** – eject a single volume or all removable volumes
 - **CPU** – brand, core architecture, and load percentage
 - **Memory** – total, used, and pressure level
 - **Thermal** – current thermal state
@@ -75,6 +80,14 @@ macbone <command> [options]
 | `lock` | Lock screen | `macbone lock` |
 | `trash empty` | Empty Trash | `macbone trash empty` |
 | `finder showhidden` | Show/hide hidden files | `macbone finder showhidden toggle` |
+| `disk` | System volume usage | `macbone disk` |
+| `disk list` | All mounted volumes | `macbone disk list` |
+| `process` | Search processes by name | `macbone process Safari` |
+| `process top` | Top processes by CPU or memory | `macbone process top --cpu --count 5`<br>`macbone process top --memory --count 10` |
+| `notify` | Send a notification | `macbone notify "Build done" --title "CI"` |
+| `openwith` | Open file with a specific app | `macbone openwith "Sublime Text" file.md` |
+| `eject` | Eject a specific volume | `macbone eject /Volumes/Backup` |
+| `ejectall` | Eject all removable volumes | `macbone ejectall` |
 | `cpu` | CPU info and load | `macbone cpu` |
 | `memory` | Memory usage and pressure | `macbone memory` |
 | `thermal` | Thermal state | `macbone thermal` |
@@ -87,8 +100,9 @@ macbone <command> [options]
 
 ## 🛠 Roadmap
 
-- **v0.4.0** – Focus / Do Not Disturb, display brightness control
-- **v0.5.0** – Bluetooth management, process list/kill
+- **v0.5.0** – Network & update utilities (Wi‑Fi info, software updates, proxy status)
+- **v0.6.0** – Clipboard & text utilities
+- **v0.7.0** – Power & maintenance tools (sleep prevention, display sleep, purge)
 - **v1.0.0** – Stable API, Homebrew core submission
 
 ---
