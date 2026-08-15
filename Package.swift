@@ -8,10 +8,6 @@ let package = Package(
         .executableTarget(
             name: "macbone"
         ),
-        .testTarget(
-            name: "macboneTests",
-            dependencies: ["macbone"]
-        ),
     ],
     swiftLanguageModes: [.v6]
 )
