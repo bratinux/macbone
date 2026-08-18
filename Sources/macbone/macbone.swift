@@ -3,7 +3,7 @@ import Foundation
 import CoreAudio
 import AudioToolbox
 
-let version = "0.4.0"
+let version = "0.5.0"
 
 @main
 struct Macbone {
@@ -41,6 +41,14 @@ struct Macbone {
         case "openwith":       handleOpenWith(subArgs)
         case "eject":          handleEject(subArgs)
         case "ejectall":       handleEjectAll()
+        case "network":        handleNetwork()
+        case "updates":        handleUpdates()
+        case "proxy":          handleProxy()
+        case "airdrop":        handleAirDrop(subArgs)
+        case "dock":           handleDock(subArgs)
+        case "accent":         handleAccent(subArgs)
+        case "highlight":      handleHighlight(subArgs)
+        case "gatekeeper":     handleGatekeeper(subArgs)
         case "info":           handleInfo()
         case "help", "--help": printUsage()
         default:
@@ -78,6 +86,14 @@ struct Macbone {
           openwith      Open file with specific app
           eject         Eject a volume
           ejectall      Eject all removable volumes
+          network       Show current network info
+          updates       List available macOS updates
+          proxy         Show proxy settings
+          airdrop       on | off | status
+          dock          autohide | magnification on|off|toggle|status
+          accent        <color> | status
+          highlight     <color> | status
+          gatekeeper    enable | disable | status
           info          Show system information
           version       Print version
         """
@@ -871,6 +887,299 @@ func handleEjectAll() {
         }
     }
     print("Ejected \(ejected) volume\(ejected == 1 ? "" : "s")")
+}
+
+func handleNetwork() {
+    let (wifiOut, _, wifiStatus) = runCommand("/usr/sbin/networksetup", ["-getinfo", "Wi-Fi"])
+    if wifiStatus == 0 && wifiOut.contains("IP address") {
+        printNetworkInfo(from: wifiOut, service: "Wi-Fi")
+        return
+    }
+
+    let (ethOut, _, ethStatus) = runCommand("/usr/sbin/networksetup", ["-getinfo", "Ethernet"])
+    if ethStatus == 0 && ethOut.contains("IP address") {
+        printNetworkInfo(from: ethOut, service: "Ethernet")
+        return
+    }
+
+    print("No active network connection found")
+    exit(1)
+}
+
+func printNetworkInfo(from output: String, service: String) {
+    let ip = extractValue(output, prefix: "IP address:")
+    let router = extractValue(output, prefix: "Router:")
+
+    var ssid = ""
+    if service == "Wi-Fi" {
+        let (ssidOut, _, _) = runCommand("/usr/sbin/networksetup", ["-getairportnetwork", "en0"])
+        ssid = extractValue(ssidOut, prefix: "Current Wi-Fi Network:") ?? ""
+    }
+
+    var dns = ""
+    let (dnsOut, _, _) = runCommand("/usr/sbin/scutil", ["--dns"])
+    dns = extractValue(dnsOut, prefix: "nameserver[0] :") ?? ""
+
+    print("Service:   \(service)")
+    if !ssid.isEmpty { print("SSID:      \(ssid)") }
+    if let ip = ip, !ip.isEmpty { print("IP:        \(ip)") }
+    if let router = router, !router.isEmpty { print("Router:    \(router)") }
+    if !dns.isEmpty { print("DNS:       \(dns)") }
+}
+
+func extractValue(_ output: String, prefix: String) -> String? {
+    for line in output.components(separatedBy: "\n") {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.hasPrefix(prefix) {
+            return trimmed.replacingOccurrences(of: prefix, with: "").trimmingCharacters(in: .whitespaces)
+        }
+    }
+    return nil
+}
+
+func handleUpdates() {
+    let (output, err, status) = runCommand("/usr/sbin/softwareupdate", ["--list"])
+    if status != 0 {
+        print("Failed to list updates: \(err)")
+        exit(1)
+    }
+    let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty {
+        print("No updates available")
+    } else {
+        print(trimmed)
+    }
+}
+
+func handleProxy() {
+    let (output, _, status) = runCommand("/usr/sbin/scutil", ["--proxy"])
+    guard status == 0 else {
+        print("Failed to read proxy settings")
+        exit(1)
+    }
+
+    let httpEnabled = extractValue(output, prefix: "HTTPEnable :") == "1"
+    let httpsEnabled = extractValue(output, prefix: "HTTPSEnable :") == "1"
+    let socksEnabled = extractValue(output, prefix: "SOCKSEnable :") == "1"
+
+    print("Proxy settings:")
+    if httpEnabled, let p = extractValue(output, prefix: "HTTPProxy :"), let port = extractValue(output, prefix: "HTTPPort :") {
+        print("  HTTP:  \(p):\(port)")
+    } else {
+        print("  HTTP:  off")
+    }
+
+    if httpsEnabled, let p = extractValue(output, prefix: "HTTPSProxy :"), let port = extractValue(output, prefix: "HTTPSPort :") {
+        print("  HTTPS: \(p):\(port)")
+    } else {
+        print("  HTTPS: off")
+    }
+
+    if socksEnabled, let p = extractValue(output, prefix: "SOCKSProxy :"), let port = extractValue(output, prefix: "SOCKSPort :") {
+        print("  SOCKS: \(p):\(port)")
+    } else {
+        print("  SOCKS: off")
+    }
+}
+
+func handleAirDrop(_ args: [String]) {
+    guard let action = args.first else {
+        print("airdrop on | off | status")
+        exit(1)
+    }
+
+    if action == "status" {
+        let (out, _, status) = runCommand("/usr/bin/defaults", ["read", "com.apple.NetworkBrowser", "DisableAirDrop"])
+        let disabled = status == 0 && out.trimmingCharacters(in: .whitespacesAndNewlines) == "1"
+        print(disabled ? "AirDrop is disabled" : "AirDrop is enabled")
+        return
+    }
+
+    let target: String
+    switch action {
+    case "on":  target = "false"
+    case "off": target = "true"
+    default:
+        print("Invalid airdrop option: \(action)")
+        exit(1)
+    }
+
+    let (_, err, status) = runCommand("/usr/bin/defaults", ["write", "com.apple.NetworkBrowser", "DisableAirDrop", "-bool", target])
+    if status != 0 {
+        print("Failed to set AirDrop: \(err)")
+        exit(1)
+    }
+    _ = runCommand("/usr/bin/killall", ["Finder"])
+    print("AirDrop is now \(action == "on" ? "enabled" : "disabled")")
+}
+
+func handleDock(_ args: [String]) {
+    guard args.count >= 2 else {
+        print("dock autohide|magnification on|off|toggle|status")
+        exit(1)
+    }
+    let feature = args[0]
+    let action = args[1]
+    let key = feature == "autohide" ? "autohide" : "magnification"
+
+    let (out, _, status) = runCommand("/usr/bin/defaults", ["read", "com.apple.dock", key])
+    let current = status == 0 && out.trimmingCharacters(in: .whitespacesAndNewlines) == "1"
+
+    let displayName = feature == "autohide" ? "Dock auto-hide" : "Dock magnification"
+
+    if action == "status" {
+        print(current ? "\(displayName) is on" : "\(displayName) is off")
+        return
+    }
+
+    let target: Bool
+    switch action {
+    case "on": target = true
+    case "off": target = false
+    case "toggle": target = !current
+    default:
+        print("Invalid dock option: \(action)")
+        exit(1)
+    }
+
+    if target == current {
+        print("\(displayName) is already \(target ? "on" : "off")")
+        return
+    }
+
+    let (_, err, writeStatus) = runCommand("/usr/bin/defaults", ["write", "com.apple.dock", key, "-bool", target ? "true" : "false"])
+    if writeStatus != 0 {
+        print("Failed to set \(displayName): \(err)")
+        exit(1)
+    }
+    _ = runCommand("/usr/bin/killall", ["Dock"])
+    print("\(displayName) is now \(target ? "on" : "off")")
+}
+
+func handleAccent(_ args: [String]) {
+    let colorMap: [String: Int] = [
+        "blue": 4,
+        "purple": 5,
+        "pink": 6,
+        "red": 0,
+        "orange": 1,
+        "yellow": 2,
+        "green": 3,
+        "graphite": -1
+    ]
+
+    if args.first == "status" {
+        let (out, _, status) = runCommand("/usr/bin/defaults", ["read", "-g", "AppleAccentColor"])
+        if status == 0 {
+            let value = Int(out.trimmingCharacters(in: .whitespacesAndNewlines)) ?? -999
+            if let name = colorMap.first(where: { $0.value == value })?.key {
+                print("Accent color is \(name)")
+            } else {
+                print("Accent color is custom")
+            }
+        } else {
+            print("Accent color is default")
+        }
+        return
+    }
+
+    guard let colorName = args.first, let colorValue = colorMap[colorName] else {
+        print("accent <blue|purple|pink|red|orange|yellow|green|graphite> | status")
+        exit(1)
+    }
+
+    let (_, err, status) = runCommand("/usr/bin/defaults", ["write", "-g", "AppleAccentColor", "-int", "\(colorValue)"])
+    if status != 0 {
+        print("Failed to set accent color: \(err)")
+        exit(1)
+    }
+    _ = runCommand("/usr/bin/killall", ["Dock"])
+    print("Accent color set to \(colorName)")
+}
+
+func handleHighlight(_ args: [String]) {
+    let colorMap: [String: String] = [
+        "blue": "0.698039 0.843137 1.000000",
+        "purple": "0.968627 0.831373 1.000000",
+        "pink": "1.000000 0.749020 0.823529",
+        "red": "1.000000 0.733333 0.721569",
+        "orange": "1.000000 0.874510 0.701961",
+        "yellow": "1.000000 0.937255 0.690196",
+        "green": "0.752941 0.964706 0.678431",
+        "graphite": "0.847059 0.847059 0.862745"
+    ]
+
+    if args.first == "status" {
+        let (out, _, status) = runCommand("/usr/bin/defaults", ["read", "-g", "AppleHighlightColor"])
+        if status == 0 {
+            let value = out.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let name = colorMap.first(where: { $0.value == value })?.key {
+                print("Highlight color is \(name)")
+            } else {
+                print("Highlight color is custom")
+            }
+        } else {
+            print("Highlight color is default")
+        }
+        return
+    }
+
+    guard let colorName = args.first, let colorValue = colorMap[colorName] else {
+        print("highlight <blue|purple|pink|red|orange|yellow|green|graphite> | status")
+        exit(1)
+    }
+
+    let (_, err, status) = runCommand("/usr/bin/defaults", ["write", "-g", "AppleHighlightColor", "-string", colorValue])
+    if status != 0 {
+        print("Failed to set highlight color: \(err)")
+        exit(1)
+    }
+    _ = runCommand("/usr/bin/killall", ["Dock"])
+    print("Highlight color set to \(colorName)")
+}
+
+func handleGatekeeper(_ args: [String]) {
+    guard let action = args.first else {
+        print("gatekeeper enable | disable | status")
+        exit(1)
+    }
+
+    if action == "status" {
+        let (out, _, status) = runCommand("/usr/sbin/spctl", ["--status"])
+        if status == 0 {
+            if out.lowercased().contains("disabled") {
+                print("Gatekeeper is disabled")
+            } else {
+                print("Gatekeeper is enabled")
+            }
+        } else {
+            print("Failed to read Gatekeeper status")
+            exit(1)
+        }
+        return
+    }
+
+    let masterFlag: String
+    let message: String
+    switch action {
+    case "enable":
+        masterFlag = "--master-enable"
+        message = "Gatekeeper is now enabled"
+    case "disable":
+        masterFlag = "--master-disable"
+        message = "Gatekeeper is now disabled"
+    default:
+        print("Invalid gatekeeper option: \(action)")
+        exit(1)
+    }
+
+    let script = "do shell script \"/usr/sbin/spctl \(masterFlag)\" with administrator privileges"
+    let (_, err, status) = runCommand("/usr/bin/osascript", ["-e", script])
+    if status != 0 {
+        print("Failed to \(action) Gatekeeper: \(err)")
+        exit(1)
+    }
+    print(message)
 }
 
 func runSysctlString(_ name: String) -> String {
