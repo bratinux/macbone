@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-26%20%7C%2027-000000?logo=apple&style=for-the-badge" alt="macOS versions">
   <img src="https://img.shields.io/badge/Swift-6.3-F05138?logo=swift&style=for-the-badge" alt="Swift 6.3">
-  <img src="https://img.shields.io/badge/version-0.4.0-blue?style=for-the-badge" alt="version">
+  <img src="https://img.shields.io/badge/version-0.5.0-blue?style=for-the-badge" alt="version">
   <img src="https://img.shields.io/github/license/bratinux/macbone?style=for-the-badge" alt="License">
 </p>
 
@@ -16,7 +16,7 @@
 
 ---
 
-## ✨ Features (v0.4.0)
+## ✨ Features (v0.5.0)
 
 - **Dark Mode** – toggle, query, or set directly from your terminal
 - **Battery** – charge level & status; health & cycle count
@@ -30,6 +30,14 @@
 - **Notify** – post macOS notifications from the terminal
 - **OpenWith** – open files with a specific application
 - **Eject** – eject a single volume or all removable volumes
+- **Network** – current service, SSID, IP, router, DNS
+- **Updates** – list available macOS updates
+- **Proxy** – show HTTP, HTTPS, SOCKS proxy settings
+- **AirDrop** – enable, disable, or check status
+- **Dock** – auto-hide and magnification toggles
+- **Accent color** – set or check system accent color
+- **Highlight color** – set or check system highlight color
+- **Gatekeeper** – enable, disable, or check status
 - **CPU** – brand, core architecture, and load percentage
 - **Memory** – total, used, and pressure level
 - **Thermal** – current thermal state
@@ -88,6 +96,15 @@ macbone <command> [options]
 | `openwith` | Open file with a specific app | `macbone openwith "Sublime Text" file.md` |
 | `eject` | Eject a specific volume | `macbone eject /Volumes/Backup` |
 | `ejectall` | Eject all removable volumes | `macbone ejectall` |
+| `network` | Current network info | `macbone network` |
+| `updates` | List available macOS updates | `macbone updates` |
+| `proxy` | Show proxy settings | `macbone proxy` |
+| `airdrop` | Enable, disable, or check AirDrop | `macbone airdrop status`<br>`macbone airdrop on` |
+| `dock autohide` | Auto-hide the Dock | `macbone dock autohide toggle` |
+| `dock magnification` | Toggle Dock magnification | `macbone dock magnification toggle` |
+| `accent` | Set or check accent color | `macbone accent purple`<br>`macbone accent status` |
+| `highlight` | Set or check highlight color | `macbone highlight green` |
+| `gatekeeper` | Enable, disable, or check Gatekeeper | `macbone gatekeeper status` |
 | `cpu` | CPU info and load | `macbone cpu` |
 | `memory` | Memory usage and pressure | `macbone memory` |
 | `thermal` | Thermal state | `macbone thermal` |
@@ -100,7 +117,6 @@ macbone <command> [options]
 
 ## 🛠 Roadmap
 
-- **v0.5.0** – Network & update utilities (Wi‑Fi info, software updates, proxy status)
 - **v0.6.0** – Clipboard & text utilities
 - **v0.7.0** – Power & maintenance tools (sleep prevention, display sleep, purge)
 - **v1.0.0** – Stable API, Homebrew core submission
