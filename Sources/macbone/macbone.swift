@@ -3,7 +3,7 @@ import Foundation
 import CoreAudio
 import AudioToolbox
 
-let version = "0.5.0"
+let version = "0.6.0"
 
 @main
 struct Macbone {
@@ -49,6 +49,14 @@ struct Macbone {
         case "accent":         handleAccent(subArgs)
         case "highlight":      handleHighlight(subArgs)
         case "gatekeeper":     handleGatekeeper(subArgs)
+        case "noidle":         handleNoidle(subArgs)
+        case "displaysleep":   handleDisplaySleep(subArgs)
+        case "boottime":       handleBootTime()
+        case "shutdown":       handleShutdown()
+        case "reboot":         handleReboot()
+        case "purge":          handlePurge()
+        case "restart":        handleRestart(subArgs)
+        case "kill":           handleKill(subArgs)
         case "info":           handleInfo()
         case "help", "--help": printUsage()
         default:
@@ -94,6 +102,14 @@ struct Macbone {
           accent        <color> | status
           highlight     <color> | status
           gatekeeper    enable | disable | status
+          noidle        <minutes>  Prevent sleep for N minutes
+          displaysleep  <minutes>  Set display sleep timeout
+          boottime      Show last boot time
+          shutdown      Shut down the Mac
+          reboot        Reboot the Mac
+          purge         Purge inactive memory (requires sudo)
+          restart       finder | dock | controlcenter | audio
+          kill          <name> | --force <name>
           info          Show system information
           version       Print version
         """
@@ -179,7 +195,12 @@ func handleBattery(_ args: [String]) {
     task.arguments = ["-g", "batt"]
     let pipe = Pipe()
     task.standardOutput = pipe
-    task.launch()
+    do {
+        try task.run()
+    } catch {
+        print("Failed to run pmset: \(error.localizedDescription)")
+        exit(1)
+    }
     task.waitUntilExit()
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
     guard let output = String(data: data, encoding: .utf8) else {
@@ -253,7 +274,12 @@ func handleBatteryHealth() {
     task.arguments = ["SPPowerDataType"]
     let pipe = Pipe()
     task.standardOutput = pipe
-    task.launch()
+    do {
+        try task.run()
+    } catch {
+        print("Failed to run system_profiler: \(error.localizedDescription)")
+        exit(1)
+    }
     task.waitUntilExit()
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
     guard let output = String(data: data, encoding: .utf8) else {
@@ -435,7 +461,12 @@ func handleSleep() {
     let task = Process()
     task.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
     task.arguments = ["sleepnow"]
-    task.launch()
+    do {
+        try task.run()
+    } catch {
+        print("Failed to run pmset: \(error.localizedDescription)")
+        exit(1)
+    }
     task.waitUntilExit()
 }
 
@@ -445,13 +476,23 @@ func handleLock() {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: cgSessionPath)
         task.arguments = ["-suspend"]
-        task.launch()
+        do {
+            try task.run()
+        } catch {
+            print("Failed to lock screen: \(error.localizedDescription)")
+            exit(1)
+        }
         task.waitUntilExit()
     } else {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         task.arguments = ["-a", "ScreenSaverEngine"]
-        task.launch()
+        do {
+            try task.run()
+        } catch {
+            print("Failed to lock screen: \(error.localizedDescription)")
+            exit(1)
+        }
         task.waitUntilExit()
     }
 }
@@ -493,7 +534,12 @@ func handleFinder(_ args: [String]) {
     getStateTask.arguments = ["read", "com.apple.finder", "AppleShowAllFiles"]
     let getPipe = Pipe()
     getStateTask.standardOutput = getPipe
-    getStateTask.launch()
+    do {
+        try getStateTask.run()
+    } catch {
+        print("Failed to read Finder state: \(error.localizedDescription)")
+        exit(1)
+    }
     getStateTask.waitUntilExit()
     let data = getPipe.fileHandleForReading.readDataToEndOfFile()
     let currentState = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "0"
@@ -536,7 +582,12 @@ func handleFinder(_ args: [String]) {
     let task = Process()
     task.executableURL = URL(fileURLWithPath: "/bin/zsh")
     task.arguments = ["-c", cmd]
-    task.launch()
+    do {
+        try task.run()
+    } catch {
+        print("Failed to set Finder state: \(error.localizedDescription)")
+        exit(1)
+    }
     task.waitUntilExit()
 
     if targetShow {
@@ -661,7 +712,12 @@ func handleInfo() {
     task.arguments = ["SPHardwareDataType"]
     let pipe = Pipe()
     task.standardOutput = pipe
-    task.launch()
+    do {
+        try task.run()
+    } catch {
+        print("Failed to run system_profiler: \(error.localizedDescription)")
+        exit(1)
+    }
     task.waitUntilExit()
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
     if let output = String(data: data, encoding: .utf8) {
@@ -1182,6 +1238,194 @@ func handleGatekeeper(_ args: [String]) {
     print(message)
 }
 
+func handleNoidle(_ args: [String]) {
+    guard let minutesStr = args.first, let minutes = Int(minutesStr), minutes > 0 else {
+        print("noidle <minutes>")
+        exit(1)
+    }
+    let seconds = minutes * 60
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: "/usr/bin/caffeinate")
+    task.arguments = ["-t", "\(seconds)"]
+    do {
+        try task.run()
+    } catch {
+        print("Failed to prevent sleep: \(error.localizedDescription)")
+        exit(1)
+    }
+    print("Preventing sleep for \(minutes) minute\(minutes == 1 ? "" : "s"). To stop early, run 'killall caffeinate'.")
+}
+
+func handleDisplaySleep(_ args: [String]) {
+    guard let minutesStr = args.first, let minutes = Int(minutesStr), minutes >= 0 else {
+        print("displaysleep <minutes>")
+        exit(1)
+    }
+    let script = "do shell script \"/usr/bin/pmset -a displaysleep \(minutes)\" with administrator privileges"
+    let (_, err, status) = runCommand("/usr/bin/osascript", ["-e", script])
+    if status != 0 {
+        print("Failed to set display sleep: \(err). This may require sudo.")
+        exit(1)
+    }
+    print("Display sleep set to \(minutes) minutes")
+}
+
+func handleBootTime() {
+    let (output, err, status) = runCommand("/usr/sbin/sysctl", ["-n", "kern.boottime"])
+    guard status == 0 else {
+        print("Failed to read boot time: \(err)")
+        exit(1)
+    }
+    let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+    let secString = trimmed.components(separatedBy: ",").first?.replacingOccurrences(of: "{ sec = ", with: "") ?? ""
+    if let seconds = TimeInterval(secString), seconds > 0 {
+        let date = Date(timeIntervalSince1970: seconds)
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .medium
+        print("Last boot: \(formatter.string(from: date))")
+    } else {
+        print("Boot time unavailable")
+    }
+}
+
+func handleShutdown() {
+    let script = "tell application \"System Events\" to shut down"
+    let (_, err, status) = runCommand("/usr/bin/osascript", ["-e", script])
+    if status != 0 {
+        print("Failed to shut down: \(err)")
+        exit(1)
+    }
+    print("Shutting down...")
+}
+
+func handleReboot() {
+    let script = "tell application \"System Events\" to restart"
+    let (_, err, status) = runCommand("/usr/bin/osascript", ["-e", script])
+    if status != 0 {
+        print("Failed to reboot: \(err)")
+        exit(1)
+    }
+    print("Rebooting...")
+}
+
+func handlePurge() {
+    let script = "do shell script \"/usr/sbin/purge\" with administrator privileges"
+    let (_, err, status) = runCommand("/usr/bin/osascript", ["-e", script])
+    if status != 0 {
+        print("Failed to purge memory: \(err)")
+        exit(1)
+    }
+    print("Memory purged")
+}
+
+func handleRestart(_ args: [String]) {
+    guard let target = args.first else {
+        print("restart finder | dock | controlcenter | audio")
+        exit(1)
+    }
+
+    if target == "audio" {
+        let script = "do shell script \"/usr/bin/killall coreaudiod\" with administrator privileges"
+        let (_, err, status) = runCommand("/usr/bin/osascript", ["-e", script])
+        if status != 0 {
+            print("Failed to restart audio: \(err). This may require sudo.")
+            exit(1)
+        }
+        print("audio restarted")
+        return
+    }
+
+    let processName: String
+    switch target {
+    case "finder":
+        processName = "Finder"
+    case "dock":
+        processName = "Dock"
+    case "controlcenter":
+        processName = "ControlCenter"
+    default:
+        print("Unknown restart target: \(target)")
+        exit(1)
+    }
+
+    let (_, err, status) = runCommand("/usr/bin/killall", [processName])
+    if status != 0 {
+        print("Failed to restart \(target): \(err)")
+        exit(1)
+    }
+    print("\(target) restarted")
+}
+
+func handleKill(_ args: [String]) {
+    var force = false
+    var name: String?
+    var yes = false
+    var i = 0
+    while i < args.count {
+        if args[i] == "--force" {
+            force = true
+            i += 1
+        } else if args[i] == "--yes" {
+            yes = true
+            i += 1
+        } else {
+            name = args[i]
+            i += 1
+        }
+    }
+
+    guard let processName = name else {
+        print("kill <name> | --force <name>")
+        exit(1)
+    }
+
+    let (output, _, status) = runCommand("/bin/ps", ["-axo", "pid=,comm="])
+    guard status == 0 else {
+        print("Failed to list processes")
+        exit(1)
+    }
+
+    var matches: [(pid: String, name: String)] = []
+    for line in output.components(separatedBy: "\n").filter({ !$0.isEmpty }) {
+        let parts = line.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+        guard parts.count == 2 else { continue }
+        let pid = String(parts[0])
+        let comm = String(parts[1])
+        if comm.localizedCaseInsensitiveContains(processName) {
+            matches.append((pid, comm))
+        }
+    }
+
+    if matches.isEmpty {
+        print("No processes found matching '\(processName)'")
+        exit(1)
+    }
+
+    print("Matching processes:")
+    for match in matches {
+        print("  PID \(match.pid): \(match.name)")
+    }
+
+    if matches.count > 1 && !yes {
+        print("Multiple matches found. Use --yes to terminate all.")
+        exit(1)
+    }
+
+    let signal = force ? "-9" : "-15"
+    var killed = 0
+    for match in matches {
+        let (_, err, killStatus) = runCommand("/bin/kill", [signal, match.pid])
+        if killStatus == 0 {
+            killed += 1
+        } else {
+            print("Failed to kill PID \(match.pid): \(err)")
+        }
+    }
+
+    print("Terminated \(killed) process\(killed == 1 ? "" : "es")")
+}
+
 func runSysctlString(_ name: String) -> String {
     var size = 0
     if sysctlbyname(name, nil, &size, nil, 0) != 0 {
@@ -1221,7 +1465,11 @@ func runCommand(_ executable: String, _ arguments: [String]) -> (stdout: String,
     let errPipe = Pipe()
     task.standardOutput = outPipe
     task.standardError = errPipe
-    task.launch()
+    do {
+        try task.run()
+    } catch {
+        return ("", "Failed to launch \(executable): \(error.localizedDescription)", 1)
+    }
     task.waitUntilExit()
     let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
     let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
