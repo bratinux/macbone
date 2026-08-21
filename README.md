@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-26%20%7C%2027-000000?logo=apple&style=for-the-badge" alt="macOS versions">
   <img src="https://img.shields.io/badge/Swift-6.3-F05138?logo=swift&style=for-the-badge" alt="Swift 6.3">
-  <img src="https://img.shields.io/badge/version-0.5.0-blue?style=for-the-badge" alt="version">
+  <img src="https://img.shields.io/badge/version-0.6.0-blue?style=for-the-badge" alt="version">
   <img src="https://img.shields.io/github/license/bratinux/macbone?style=for-the-badge" alt="License">
 </p>
 
@@ -16,7 +16,7 @@
 
 ---
 
-## ✨ Features (v0.5.0)
+## ✨ Features (v0.6.0)
 
 - **Dark Mode** – toggle, query, or set directly from your terminal
 - **Battery** – charge level & status; health & cycle count
@@ -38,6 +38,9 @@
 - **Accent color** – set or check system accent color
 - **Highlight color** – set or check system highlight color
 - **Gatekeeper** – enable, disable, or check status
+- **Power** – noidle, display sleep, boot time, shutdown, reboot, purge
+- **Process control** – kill by name (graceful or forced)
+- **Restart** – restart Finder, Dock, Control Center, or CoreAudio
 - **CPU** – brand, core architecture, and load percentage
 - **Memory** – total, used, and pressure level
 - **Thermal** – current thermal state
@@ -105,6 +108,14 @@ macbone <command> [options]
 | `accent` | Set or check accent color | `macbone accent purple`<br>`macbone accent status` |
 | `highlight` | Set or check highlight color | `macbone highlight green` |
 | `gatekeeper` | Enable, disable, or check Gatekeeper | `macbone gatekeeper status` |
+| `noidle` | Prevent sleep for N minutes | `macbone noidle 30` |
+| `displaysleep` | Set display sleep timeout | `macbone displaysleep 10` |
+| `boottime` | Show last boot time | `macbone boottime` |
+| `shutdown` | Shut down the Mac | `macbone shutdown` |
+| `reboot` | Reboot the Mac | `macbone reboot` |
+| `purge` | Purge inactive memory | `macbone purge` |
+| `restart` | Restart system component | `macbone restart finder`<br>`macbone restart dock`<br>`macbone restart controlcenter`<br>`macbone restart audio` |
+| `kill` | Terminate process by name | `macbone kill Safari`<br>`macbone kill --force --yes Safari` |
 | `cpu` | CPU info and load | `macbone cpu` |
 | `memory` | Memory usage and pressure | `macbone memory` |
 | `thermal` | Thermal state | `macbone thermal` |
@@ -117,8 +128,9 @@ macbone <command> [options]
 
 ## 🛠 Roadmap
 
-- **v0.6.0** – Clipboard & text utilities
-- **v0.7.0** – Power & maintenance tools (sleep prevention, display sleep, purge)
+- **v0.7.0** – File system & search utilities
+- **v0.8.0** – Security & privacy tools
+- **v0.9.0** – System management & final feature set
 - **v1.0.0** – Stable API, Homebrew core submission
 
 ---
