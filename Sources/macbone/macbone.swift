@@ -3,7 +3,7 @@ import Foundation
 import CoreAudio
 import AudioToolbox
 
-let version = "0.6.0"
+let version = "0.7.0"
 
 @main
 struct Macbone {
@@ -57,6 +57,11 @@ struct Macbone {
         case "purge":          handlePurge()
         case "restart":        handleRestart(subArgs)
         case "kill":           handleKill(subArgs)
+        case "search":         handleSearch(subArgs)
+        case "du":             handleDu(subArgs)
+        case "fileinfo":       handleFileInfo(subArgs)
+        case "hide":           handleHide(subArgs)
+        case "unhide":         handleUnhide(subArgs)
         case "info":           handleInfo()
         case "help", "--help": printUsage()
         default:
@@ -110,6 +115,11 @@ struct Macbone {
           purge         Purge inactive memory (requires sudo)
           restart       finder | dock | controlcenter | audio
           kill          <name> | --force <name>
+          search        <query> | --name <filename> | --path <dir> --name <pat> | --all
+          du            <path> | --top <path>
+          fileinfo      <path>
+          hide          <path>
+          unhide        <path>
           info          Show system information
           version       Print version
         """
@@ -1424,6 +1434,199 @@ func handleKill(_ args: [String]) {
     }
 
     print("Terminated \(killed) process\(killed == 1 ? "" : "es")")
+}
+
+func handleSearch(_ args: [String]) {
+    var query = ""
+    var path: String?
+    var name: String?
+    var useAll = false
+    var i = 0
+
+    while i < args.count {
+        switch args[i] {
+        case "--name":
+            guard i + 1 < args.count else {
+                print("search --name requires a filename")
+                exit(1)
+            }
+            name = args[i + 1]
+            i += 2
+        case "--path":
+            guard i + 1 < args.count else {
+                print("search --path requires a directory")
+                exit(1)
+            }
+            path = args[i + 1]
+            i += 2
+        case "--all":
+            useAll = true
+            i += 1
+        default:
+            if query.isEmpty {
+                query = args[i]
+            } else {
+                query += " " + args[i]
+            }
+            i += 1
+        }
+    }
+
+    if let name = name {
+        query = "kMDItemFSName == '\(name)'"
+    }
+
+    guard !query.isEmpty else {
+        print("search <query> | --name <filename> | --path <dir> --name <pat> | --all")
+        exit(1)
+    }
+
+    var mdfindArgs = [String]()
+    if let path = path {
+        guard FileManager.default.fileExists(atPath: path) else {
+            print("Directory not found: \(path)")
+            exit(1)
+        }
+        mdfindArgs += ["-onlyin", path]
+    } else if !useAll {
+        let currentDir = FileManager.default.currentDirectoryPath
+        mdfindArgs += ["-onlyin", currentDir]
+    }
+
+    mdfindArgs.append(query)
+
+    let (output, err, status) = runCommand("/usr/bin/mdfind", mdfindArgs)
+    if status != 0 {
+        print("Search failed: \(err)")
+        exit(2)
+    }
+
+    let results = output.components(separatedBy: "\n").filter { !$0.isEmpty }
+    if results.isEmpty {
+        print("No results found")
+        exit(1)
+    }
+
+    for result in results {
+        print(result)
+    }
+}
+
+func handleDu(_ args: [String]) {
+    if args.first == "--top" {
+        guard args.count >= 2 else {
+            print("du --top <path>")
+            exit(1)
+        }
+        let dirPath = args[1]
+        guard FileManager.default.fileExists(atPath: dirPath) else {
+            print("Directory not found: \(dirPath)")
+            exit(1)
+        }
+
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(atPath: dirPath) else {
+            print("Could not read directory: \(dirPath)")
+            exit(1)
+        }
+
+        for item in contents.sorted() {
+            let fullPath = (dirPath as NSString).appendingPathComponent(item)
+            let (out, _, status) = runCommand("/usr/bin/du", ["-sh", fullPath])
+            if status == 0 {
+                print(out.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+        }
+        return
+    }
+
+    guard let path = args.first else {
+        print("du <path> | --top <path>")
+        exit(1)
+    }
+
+    guard FileManager.default.fileExists(atPath: path) else {
+        print("File or directory not found: \(path)")
+        exit(1)
+    }
+
+    let (out, err, status) = runCommand("/usr/bin/du", ["-sh", path])
+    if status != 0 {
+        print("Failed to get size: \(err)")
+        exit(1)
+    }
+    print(out.trimmingCharacters(in: .whitespacesAndNewlines))
+}
+
+func handleFileInfo(_ args: [String]) {
+    guard let path = args.first else {
+        print("fileinfo <path>")
+        exit(1)
+    }
+
+    guard FileManager.default.fileExists(atPath: path) else {
+        print("File not found: \(path)")
+        exit(1)
+    }
+
+    let (output, err, status) = runCommand("/usr/bin/mdls", [path])
+    if status != 0 {
+        print("Failed to read file info: \(err)")
+        exit(1)
+    }
+
+    let prefixes = [
+        "kMDItemFSName",
+        "kMDItemDisplayName",
+        "kMDItemFSSize",
+        "kMDItemContentType",
+        "kMDItemDateAdded",
+        "kMDItemContentModificationDate"
+    ]
+
+    for line in output.components(separatedBy: "\n") {
+        for prefix in prefixes where line.hasPrefix(prefix) {
+            print(line)
+        }
+    }
+}
+
+func handleHide(_ args: [String]) {
+    guard let path = args.first else {
+        print("hide <path>")
+        exit(1)
+    }
+
+    guard FileManager.default.fileExists(atPath: path) else {
+        print("File not found: \(path)")
+        exit(1)
+    }
+
+    let (_, err, status) = runCommand("/usr/bin/chflags", ["hidden", path])
+    if status != 0 {
+        print("Failed to hide \(path): \(err)")
+        exit(1)
+    }
+    print("Hidden \(path)")
+}
+
+func handleUnhide(_ args: [String]) {
+    guard let path = args.first else {
+        print("unhide <path>")
+        exit(1)
+    }
+
+    guard FileManager.default.fileExists(atPath: path) else {
+        print("File not found: \(path)")
+        exit(1)
+    }
+
+    let (_, err, status) = runCommand("/usr/bin/chflags", ["nohidden", path])
+    if status != 0 {
+        print("Failed to unhide \(path): \(err)")
+        exit(1)
+    }
+    print("Unhidden \(path)")
 }
 
 func runSysctlString(_ name: String) -> String {
