@@ -1,7 +1,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-26%20%7C%2027-000000?logo=apple&style=for-the-badge" alt="macOS versions">
   <img src="https://img.shields.io/badge/Swift-6.3-F05138?logo=swift&style=for-the-badge" alt="Swift 6.3">
-  <img src="https://img.shields.io/badge/version-0.6.0-blue?style=for-the-badge" alt="version">
+  <img src="https://img.shields.io/badge/version-0.7.0-blue?style=for-the-badge" alt="version">
   <img src="https://img.shields.io/github/license/bratinux/macbone?style=for-the-badge" alt="License">
 </p>
 
@@ -12,11 +12,11 @@
 
 ## 🧠 What is macbone?
 
-`macbone` is a **single binary**, **zero‑dependency** command‑line tool for macOS power users. It wraps the most useful system controls and health checks into one consistent, intuitive interface. No more `defaults` incantations or manual `pmset` parsing – just `macbone`.
+`macbone` is a **single binary**, **zero‑dependency** command‑line tool for macOS power users. It wraps the most useful system controls, health checks, and maintenance tasks into one consistent, intuitive interface. No more `defaults` incantations or manual `pmset` parsing – just `macbone`.
 
 ---
 
-## ✨ Features (v0.6.0)
+## ✨ Features (v0.7.0)
 
 - **Dark Mode** – toggle, query, or set directly from your terminal
 - **Battery** – charge level & status; health & cycle count
@@ -41,6 +41,10 @@
 - **Power** – noidle, display sleep, boot time, shutdown, reboot, purge
 - **Process control** – kill by name (graceful or forced)
 - **Restart** – restart Finder, Dock, Control Center, or CoreAudio
+- **File search** – search files and folders with Spotlight
+- **Directory size** – show file or directory size
+- **File info** – show file metadata
+- **Hide/Unhide** – toggle file visibility
 - **CPU** – brand, core architecture, and load percentage
 - **Memory** – total, used, and pressure level
 - **Thermal** – current thermal state
@@ -94,7 +98,7 @@ macbone <command> [options]
 | `disk` | System volume usage | `macbone disk` |
 | `disk list` | All mounted volumes | `macbone disk list` |
 | `process` | Search processes by name | `macbone process Safari` |
-| `process top` | Top processes by CPU or memory | `macbone process top --cpu --count 5`<br>`macbone process top --memory --count 10` |
+| `process top` | Top processes by CPU or memory | `macbone process top --cpu --count 5` |
 | `notify` | Send a notification | `macbone notify "Build done" --title "CI"` |
 | `openwith` | Open file with a specific app | `macbone openwith "Sublime Text" file.md` |
 | `eject` | Eject a specific volume | `macbone eject /Volumes/Backup` |
@@ -102,10 +106,10 @@ macbone <command> [options]
 | `network` | Current network info | `macbone network` |
 | `updates` | List available macOS updates | `macbone updates` |
 | `proxy` | Show proxy settings | `macbone proxy` |
-| `airdrop` | Enable, disable, or check AirDrop | `macbone airdrop status`<br>`macbone airdrop on` |
+| `airdrop` | Enable, disable, or check AirDrop | `macbone airdrop status` |
 | `dock autohide` | Auto-hide the Dock | `macbone dock autohide toggle` |
 | `dock magnification` | Toggle Dock magnification | `macbone dock magnification toggle` |
-| `accent` | Set or check accent color | `macbone accent purple`<br>`macbone accent status` |
+| `accent` | Set or check accent color | `macbone accent purple` |
 | `highlight` | Set or check highlight color | `macbone highlight green` |
 | `gatekeeper` | Enable, disable, or check Gatekeeper | `macbone gatekeeper status` |
 | `noidle` | Prevent sleep for N minutes | `macbone noidle 30` |
@@ -114,8 +118,13 @@ macbone <command> [options]
 | `shutdown` | Shut down the Mac | `macbone shutdown` |
 | `reboot` | Reboot the Mac | `macbone reboot` |
 | `purge` | Purge inactive memory | `macbone purge` |
-| `restart` | Restart system component | `macbone restart finder`<br>`macbone restart dock`<br>`macbone restart controlcenter`<br>`macbone restart audio` |
-| `kill` | Terminate process by name | `macbone kill Safari`<br>`macbone kill --force --yes Safari` |
+| `restart` | Restart system component | `macbone restart finder`<br>`macbone restart dock`<br>`macbone restart audio` |
+| `kill` | Terminate process by name | `macbone kill --yes Safari`<br>`macbone kill --force --yes Safari` |
+| `search` | Search files using Spotlight | `macbone search "README.md"`<br>`macbone search --path ~/Documents --name "macbone*"` |
+| `du` | Show file or directory size | `macbone du ~/Downloads`<br>`macbone du --top ~/Documents` |
+| `fileinfo` | Show file metadata | `macbone fileinfo README.md` |
+| `hide` | Hide a file or folder | `macbone hide ~/private.txt` |
+| `unhide` | Unhide a file or folder | `macbone unhide ~/private.txt` |
 | `cpu` | CPU info and load | `macbone cpu` |
 | `memory` | Memory usage and pressure | `macbone memory` |
 | `thermal` | Thermal state | `macbone thermal` |
@@ -128,7 +137,6 @@ macbone <command> [options]
 
 ## 🛠 Roadmap
 
-- **v0.7.0** – File system & search utilities
 - **v0.8.0** – Security & privacy tools
 - **v0.9.0** – System management & final feature set
 - **v1.0.0** – Stable API, Homebrew core submission
